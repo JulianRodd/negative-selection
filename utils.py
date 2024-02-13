@@ -122,26 +122,35 @@ def get_scores_from_java_program(test_data, r_value):
     return scores
 
 
-def analyze_language_comparison(
-    english_test_file, other_language_test_file, language_name, r
-):
-    print(f"Analyzing language comparison between English and {language_name}...")
-    test_data, labels = load_test_data_and_labels(
-        english_test_file, other_language_test_file
-    )
-
+def generate_combined_roc_curves(data_sets):
+    fprs, tprs, rocs_auc, r_values, titles = [], [], [], [], []
+    for data_set in data_sets:
+        fpr, tpr, roc_auc, r_value, title = data_set
+        fprs.append(fpr)
+        tprs.append(tpr)
+        rocs_auc.append(roc_auc)
+        r_values.append(r_value)
+        titles.append(title)
+    
+    plot_roc(fprs, tprs, rocs_auc, r_values, titles, "Combined ROC Curves")
+    
   
+def analyze_language_comparison(english_test_file, other_language_test_file, language_name, r):
+    print(f"Analyzing language comparison between English and {language_name}...")
+
+    test_data, labels = load_test_data_and_labels(english_test_file, other_language_test_file)
     print(f"Processing with r = {r}...")
     scores = get_scores_from_java_program(test_data, r)
-    if len(scores) != len(labels):
-        print(
-            f"Length mismatch for r={r}: Scores length: {len(scores)}, Labels length: {len(labels)}"
-        )
-    else:
-        fpr, tpr, roc_auc = compute_roc_auc(labels, scores)
-        plot_roc(fpr, tpr, roc_auc, r, additional_title=f" (English vs {language_name})")
-        print(f"Language: {language_name}, r = {r}, AUC = {roc_auc:.2f}")
 
+    if len(scores) != len(labels):
+        print(f"Length mismatch for r={r}: Scores length: {len(scores)}, Labels length: {len(labels)}")
+        return None, None, None
+
+    fpr, tpr, roc_auc = compute_roc_auc(labels, scores)
+    plot_roc(fpr, tpr, roc_auc, r, additional_title=f" (English vs {language_name})")
+    print(f"Language: {language_name}, r = {r}, AUC = {roc_auc:.2f}")
+
+    return fpr, tpr, roc_auc
 
 def get_scores_from_java_program(test_data, r_value):
     scores = []
@@ -162,53 +171,55 @@ def preprocess_data(file_path, chunk_size):
     :param chunk_size: The fixed length for each chunk.
     :return: A list of fixed-length chunks of system call sequences.
     """
-    chunks = []
+    sequences = []
+    chunk_counts = []  # Store the number of chunks per sequence
+
     with open(file_path, "r") as file:
         for line in file:
             line = line.strip()
-            chunks.extend(
-                [line[i : i + chunk_size] for i in range(0, len(line), chunk_size)]
-            )
-    return chunks
+            chunks = [line[i:i+chunk_size] for i in range(0, len(line), chunk_size)]
+            sequences.extend(chunks)
+            chunk_counts.append(len(chunks))
+
+    return sequences, chunk_counts
 
 
-def combine_scores(chunk_scores, num_chunks_per_sequence):
+def combine_scores(chunk_scores, chunk_counts):
     """
     Combines the chunk scores into a composite score for each sequence.
 
     :param chunk_scores: List of scores for each chunk.
-    :param num_chunks_per_sequence: Number of chunks per original sequence.
+    :param chunk_counts: List of the number of chunks per sequence.
     :return: Composite scores for each sequence.
     """
     composite_scores = []
-    for i in range(0, len(chunk_scores), num_chunks_per_sequence):
-        composite_scores.append(np.mean(chunk_scores[i : i + num_chunks_per_sequence]))
+    start_index = 0
+    for count in chunk_counts:
+        end_index = start_index + count
+        sequence_scores = chunk_scores[start_index:end_index]
+        composite_score = np.mean(sequence_scores) if sequence_scores else 0
+        composite_scores.append(composite_score)
+        start_index = end_index
     return composite_scores
 
 
-def analyze_syscalls_data(train_file, test_file, labels_file, chunk_size, r_value):
-    # Step 1: Logging the start of syscall data analysis.
-    print(f"Analyzing syscall data with train file: {train_file}, test file: {test_file}, r = {r_value}, chunk size = {chunk_size}")
 
-    # Step 2: Preprocessing the system call data into fixed-length chunks.
-    test_data_chunks = preprocess_data(test_file, chunk_size)
+def analyze_syscalls_data(train_file, test_file, labels_file, chunk_size, r_value):
+    print(f"Analyzing syscall data with train file: {train_file}, test file: {test_file}")
+
+    test_data_chunks, chunk_counts = preprocess_data(test_file, chunk_size)
     print(f"Preprocessed test data into {len(test_data_chunks)} chunks.")
 
-    # Step 3: Running the negative selection algorithm on each chunk and collecting scores.
     chunk_scores = get_scores_from_java_program(test_data_chunks, r_value=str(r_value))
     print("Received scores for each chunk.")
 
-    # Step 4: Loading labels for each sequence (normal or anomalous).
     labels = np.loadtxt(labels_file)
-    print("Loaded labels from file.")
-
-    # Step 5: Combining the scores from each chunk to get a composite score for each sequence.
-    composite_scores = combine_scores(chunk_scores, len(test_data_chunks) // len(labels))
+    if len(labels) != len(chunk_counts):
+        print(f"Warning: Number of labels {len(labels)} doesn't match number of sequences {len(chunk_counts)}")
+    
+    composite_scores = combine_scores(chunk_scores, chunk_counts)
     print("Combined chunk scores into composite scores.")
 
-    # Step 6: Computing the ROC curve and AUC for the classification.
     fpr, tpr, roc_auc = compute_roc_auc(labels, composite_scores)
-    additional_title = f" (Syscalls - r={r_value}, Chunk Size={chunk_size})"
-    plot_roc(fpr, tpr, roc_auc, r_value, additional_title=additional_title)
+    plot_roc(fpr, tpr, roc_auc, r_value, additional_title=f" (Syscalls - Chunk Size={chunk_size})")
     print(f"ROC AUC for syscall data: {roc_auc:.2f}")
-
