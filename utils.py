@@ -3,7 +3,9 @@ import numpy as np
 from sklearn.metrics import roc_curve, auc
 import matplotlib.pyplot as plt
 import subprocess
-
+import hashlib
+import json
+import os
 
 def run_java_program(r_value, train_file, test_string):
     command = [
@@ -31,16 +33,21 @@ def run_java_program(r_value, train_file, test_string):
 
 
 def parse_output(output):
-    return [float(line) for line in output.split("\n") if line]
+    scores = []
+    for line in output.split("\n"):
+        if line:
+            scores.extend([float(score) for score in line.split()])
+    return scores
+
 
 
 def compute_roc_auc(labels, scores):
+    scores = np.nan_to_num(scores)  # Replace NaN with 0
     fpr, tpr, _ = roc_curve(labels, scores)
     roc_auc = auc(fpr, tpr)
     return fpr, tpr, roc_auc
 
 
-import os
 
 def plot_roc(fpr, tpr, roc_auc, r_value, additional_title=""):
     plt.figure()
@@ -106,33 +113,65 @@ def analyze_language_data():
     test_data, labels = load_test_data_and_labels(english_test_file, tagalog_test_file)
 
     for r in range(1, 10):
-        scores = get_scores_from_java_program(test_data, r)
+        scores = get_scores_from_java_program(test_data, r, cache_name="language_analysis")
         fpr, tpr, roc_auc = compute_roc_auc(labels, scores)
         plot_roc(fpr, tpr, roc_auc, r)
 
 
-def get_scores_from_java_program(test_data, r_value):
+
+
+def get_scores_from_java_program(test_data, r_value, cache_name=""):
     scores = []
-    for line in test_data:
-        output = run_java_program(r_value, "english.train", line)
-        if not output:
-            print(f"No output for line: {line}")
-        score = parse_output(output)
-        scores.extend(score)
+    cache_dir = "cache"
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Generate a unique cache filename based on the cache_name and r_value
+    cache_file = os.path.join(cache_dir, f"{cache_name}_r{r_value}.json") if cache_name else ""
+
+    if cache_name and os.path.exists(cache_file):
+        print(f"Loading scores from cache: {cache_file}")
+        with open(cache_file, "r") as file:
+            scores = json.load(file)
+    else:
+        for line in test_data:
+            output = run_java_program(r_value, "english.train", line)
+            if not output:
+                print(f"No output for line: {line}")
+            score = parse_output(output)
+            scores.extend(score)
+
+        if cache_name:
+            print(f"Saving scores to cache: {cache_file}")
+            with open(cache_file, "w") as file:
+                json.dump(scores, file)
+
     return scores
 
 
-def generate_combined_roc_curves(data_sets):
-    fprs, tprs, rocs_auc, r_values, titles = [], [], [], [], []
-    for data_set in data_sets:
-        fpr, tpr, roc_auc, r_value, title = data_set
-        fprs.append(fpr)
-        tprs.append(tpr)
-        rocs_auc.append(roc_auc)
-        r_values.append(r_value)
-        titles.append(title)
+
+
+def generate_combined_roc_curves(data_sets, additional_title=""):
+    plt.figure(figsize=(10, 8))
+    colors = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'purple', 'orange', 'brown', 'pink', 'gray']
+
+    for (fpr, tpr, roc_auc, r_value, title), color in zip(data_sets, colors):
+        plt.plot(fpr, tpr, color=color, lw=2, label=f'{title} (AUC = {roc_auc:.2f}, r = {r_value})')
+
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Chance')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Combined ROC Curves' + additional_title)
+    plt.legend(loc='lower right', prop={'size': 10})
+    plt.grid(True)
+
+    # Save the combined plot
+    os.makedirs('roc_curves', exist_ok=True)
+    plt.savefig(f'roc_curves/combined_roc_curves_{additional_title}.png')
+    plt.close()
+    print(f"Saved combined ROC curve plot as 'roc_curves/combined_roc_curves_{additional_title}.png'")
     
-    plot_roc(fprs, tprs, rocs_auc, r_values, titles, "Combined ROC Curves")
     
   
 def analyze_language_comparison(english_test_file, other_language_test_file, language_name, r):
@@ -140,7 +179,7 @@ def analyze_language_comparison(english_test_file, other_language_test_file, lan
 
     test_data, labels = load_test_data_and_labels(english_test_file, other_language_test_file)
     print(f"Processing with r = {r}...")
-    scores = get_scores_from_java_program(test_data, r)
+    scores = get_scores_from_java_program(test_data, r, cache_name=f"language_comparison_{language_name}")
 
     if len(scores) != len(labels):
         print(f"Length mismatch for r={r}: Scores length: {len(scores)}, Labels length: {len(labels)}")
@@ -151,16 +190,6 @@ def analyze_language_comparison(english_test_file, other_language_test_file, lan
     print(f"Language: {language_name}, r = {r}, AUC = {roc_auc:.2f}")
 
     return fpr, tpr, roc_auc
-
-def get_scores_from_java_program(test_data, r_value):
-    scores = []
-    for line in test_data:
-        # Run the Java program for each line of test data
-        output = run_java_program(r_value, "english.train", line)
-        # Parse the output to get the scores
-        score = parse_output(output)
-        scores.extend(score)  # Use extend since parse_output returns a list
-    return scores
 
 
 def preprocess_data(file_path, chunk_size):
@@ -210,7 +239,7 @@ def analyze_syscalls_data(train_file, test_file, labels_file, chunk_size, r_valu
     test_data_chunks, chunk_counts = preprocess_data(test_file, chunk_size)
     print(f"Preprocessed test data into {len(test_data_chunks)} chunks.")
 
-    chunk_scores = get_scores_from_java_program(test_data_chunks, r_value=str(r_value))
+    chunk_scores = get_scores_from_java_program(test_data_chunks, r_value=str(r_value), cache_name="syscall_analysis")
     print("Received scores for each chunk.")
 
     labels = np.loadtxt(labels_file)
@@ -221,5 +250,5 @@ def analyze_syscalls_data(train_file, test_file, labels_file, chunk_size, r_valu
     print("Combined chunk scores into composite scores.")
 
     fpr, tpr, roc_auc = compute_roc_auc(labels, composite_scores)
-    plot_roc(fpr, tpr, roc_auc, r_value, additional_title=f" (Syscalls - Chunk Size={chunk_size})")
-    print(f"ROC AUC for syscall data: {roc_auc:.2f}")
+    
+    return fpr, tpr, roc_auc, chunk_size, r_value
