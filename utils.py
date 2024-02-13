@@ -6,7 +6,19 @@ import subprocess
 
 
 def run_java_program(r_value, train_file, test_string):
-    command = ["java", "-jar", "negsel2.jar", "-self", train_file, "-n", "10", "-r", str(r_value), "-c", "-l"]
+    command = [
+        "java",
+        "-jar",
+        "negsel2.jar",
+        "-self",
+        train_file,
+        "-n",
+        "10",
+        "-r",
+        str(r_value),
+        "-c",
+        "-l",
+    ]
     result = subprocess.run(command, input=test_string, text=True, capture_output=True)
     if result.returncode != 0:
         print(f"Error running Java program: {result.stderr}")
@@ -90,61 +102,102 @@ def get_scores_from_java_program(test_data, r_value):
     return scores
 
 
-def main():
-    # Part 1: Analyze Language Data (English vs Tagalog)
-    analyze_language_data()
-
-    # EXERCISE 3: Language Comparison
-    english_test_file = "english.test"
-    languages = {
-        "Hiligaynon": "lang/hiligaynon.txt",
-        "Middle English": "lang/middle-english.txt",
-        "Plautdietsch": "lang/plautdietsch.txt",
-        "Xhosa": "lang/xhosa.txt"
-    }
-
-    for language, test_file in languages.items():
-        analyze_language_comparison(english_test_file, test_file, language)
-
-def analyze_language_comparison(english_test_file, other_language_test_file, language_name):
-    test_data, labels = load_test_data_and_labels(english_test_file, other_language_test_file)
+def analyze_language_comparison(
+    english_test_file, other_language_test_file, language_name
+):
+    test_data, labels = load_test_data_and_labels(
+        english_test_file, other_language_test_file
+    )
 
     for r in range(1, 10):
         scores = get_scores_from_java_program(test_data, r)
         if len(scores) != len(labels):
-            print(f"Length mismatch for r={r}: Scores length: {len(scores)}, Labels length: {len(labels)}")
+            print(
+                f"Length mismatch for r={r}: Scores length: {len(scores)}, Labels length: {len(labels)}"
+            )
         else:
             fpr, tpr, roc_auc = compute_roc_auc(labels, scores)
             plot_roc(fpr, tpr, roc_auc, r)
             print(f"Language: {language_name}, r = {r}, AUC = {roc_auc:.2f}")
-
 
 
 def get_scores_from_java_program(test_data, r_value):
     scores = []
     for line in test_data:
         # Run the Java program for each line of test data
-        output = run_java_program(
-            r_value, "english.train", line
-        )  
+        output = run_java_program(r_value, "english.train", line)
         # Parse the output to get the scores
         score = parse_output(output)
         scores.extend(score)  # Use extend since parse_output returns a list
     return scores
 
 
-def analyze_language_comparison(english_test_file, other_language_test_file, language_name):
-    test_data, labels = load_test_data_and_labels(english_test_file, other_language_test_file)
+def analyze_language_comparison(
+    english_test_file, other_language_test_file, language_name
+):
+    test_data, labels = load_test_data_and_labels(
+        english_test_file, other_language_test_file
+    )
 
     for r in range(1, 10):
         scores = get_scores_from_java_program(test_data, r)
         if len(scores) != len(labels):
-            print(f"Length mismatch for r={r}: Scores length: {len(scores)}, Labels length: {len(labels)}")
+            print(
+                f"Length mismatch for r={r}: Scores length: {len(scores)}, Labels length: {len(labels)}"
+            )
         else:
             fpr, tpr, roc_auc = compute_roc_auc(labels, scores)
             plot_roc(fpr, tpr, roc_auc, r)
             print(f"Language: {language_name}, r = {r}, AUC = {roc_auc:.2f}")
 
 
-if __name__ == "__main__":
-    main()
+def preprocess_data(file_path, chunk_size):
+    """
+    Reads a file containing system call sequences and converts them into fixed-length chunks.
+
+    :param file_path: Path to the file containing system call sequences.
+    :param chunk_size: The fixed length for each chunk.
+    :return: A list of fixed-length chunks of system call sequences.
+    """
+    chunks = []
+    with open(file_path, "r") as file:
+        for line in file:
+            line = line.strip()
+            chunks.extend(
+                [line[i : i + chunk_size] for i in range(0, len(line), chunk_size)]
+            )
+    return chunks
+
+
+def combine_scores(chunk_scores, num_chunks_per_sequence):
+    """
+    Combines the chunk scores into a composite score for each sequence.
+
+    :param chunk_scores: List of scores for each chunk.
+    :param num_chunks_per_sequence: Number of chunks per original sequence.
+    :return: Composite scores for each sequence.
+    """
+    composite_scores = []
+    for i in range(0, len(chunk_scores), num_chunks_per_sequence):
+        composite_scores.append(np.mean(chunk_scores[i : i + num_chunks_per_sequence]))
+    return composite_scores
+
+
+def analyze_syscalls_data(train_file, test_file, labels_file, chunk_size):
+    # Preprocess test data
+    test_data_chunks = preprocess_data(test_file, chunk_size)
+
+    # Run Java program and get scores for each chunk
+    chunk_scores = get_scores_from_java_program(test_data_chunks, r_value="4") # r_value can be adjusted
+
+    # Read labels
+    labels = np.loadtxt(labels_file)
+
+    # Combine chunk scores into composite scores
+    composite_scores = combine_scores(chunk_scores, len(test_data_chunks) // len(labels))
+
+    # Compute ROC and AUC
+    fpr, tpr, roc_auc = compute_roc_auc(labels, composite_scores)
+    plot_roc(fpr, tpr, roc_auc, r_value="4") # r_value displayed in the plot
+
+    print(f"ROC AUC: {roc_auc:.2f}")
