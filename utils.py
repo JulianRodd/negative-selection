@@ -19,9 +19,14 @@ def run_java_program(r_value, train_file, test_string):
         "-c",
         "-l",
     ]
+    print(
+        f"Running Java program with r={r_value} on test string: {test_string[:30]}..."
+    )  # Log part of the test string
     result = subprocess.run(command, input=test_string, text=True, capture_output=True)
     if result.returncode != 0:
         print(f"Error running Java program: {result.stderr}")
+    else:
+        print("Java program executed successfully.")
     return result.stdout
 
 
@@ -35,7 +40,9 @@ def compute_roc_auc(labels, scores):
     return fpr, tpr, roc_auc
 
 
-def plot_roc(fpr, tpr, roc_auc, r_value):
+import os
+
+def plot_roc(fpr, tpr, roc_auc, r_value, additional_title=""):
     plt.figure()
     plt.plot(
         fpr, tpr, color="darkorange", lw=2, label=f"ROC curve (area = {roc_auc:.2f})"
@@ -45,9 +52,22 @@ def plot_roc(fpr, tpr, roc_auc, r_value):
     plt.ylim([0.0, 1.05])
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
-    plt.title(f"Receiver Operating Characteristic for r = {r_value}")
+
+    title = f"Receiver Operating Characteristic for r = {r_value} {additional_title}".strip()
+    plt.title(title)
     plt.legend(loc="lower right")
-    plt.show()
+
+    # Create the roc_curves directory if it doesn't exist
+    os.makedirs('roc_curves', exist_ok=True)
+
+    # Replace spaces and special characters in the title with underscores for the file name
+    file_name = title.replace(" ", "_").replace("=", "").replace(",", "") + ".png"
+
+    # Save the figure
+    plt.savefig(f"roc_curves/{file_name}")
+    plt.close()  # Close the plot to free up memory
+    print(f"Saved ROC curve plot as roc_curves/{file_name}")
+
 
 
 def load_test_data_and_labels(english_test_file, tagalog_test_file):
@@ -103,22 +123,24 @@ def get_scores_from_java_program(test_data, r_value):
 
 
 def analyze_language_comparison(
-    english_test_file, other_language_test_file, language_name
+    english_test_file, other_language_test_file, language_name, r
 ):
+    print(f"Analyzing language comparison between English and {language_name}...")
     test_data, labels = load_test_data_and_labels(
         english_test_file, other_language_test_file
     )
 
-    for r in range(1, 10):
-        scores = get_scores_from_java_program(test_data, r)
-        if len(scores) != len(labels):
-            print(
-                f"Length mismatch for r={r}: Scores length: {len(scores)}, Labels length: {len(labels)}"
-            )
-        else:
-            fpr, tpr, roc_auc = compute_roc_auc(labels, scores)
-            plot_roc(fpr, tpr, roc_auc, r)
-            print(f"Language: {language_name}, r = {r}, AUC = {roc_auc:.2f}")
+  
+    print(f"Processing with r = {r}...")
+    scores = get_scores_from_java_program(test_data, r)
+    if len(scores) != len(labels):
+        print(
+            f"Length mismatch for r={r}: Scores length: {len(scores)}, Labels length: {len(labels)}"
+        )
+    else:
+        fpr, tpr, roc_auc = compute_roc_auc(labels, scores)
+        plot_roc(fpr, tpr, roc_auc, r, additional_title=f" (English vs {language_name})")
+        print(f"Language: {language_name}, r = {r}, AUC = {roc_auc:.2f}")
 
 
 def get_scores_from_java_program(test_data, r_value):
@@ -130,25 +152,6 @@ def get_scores_from_java_program(test_data, r_value):
         score = parse_output(output)
         scores.extend(score)  # Use extend since parse_output returns a list
     return scores
-
-
-def analyze_language_comparison(
-    english_test_file, other_language_test_file, language_name
-):
-    test_data, labels = load_test_data_and_labels(
-        english_test_file, other_language_test_file
-    )
-
-    for r in range(1, 10):
-        scores = get_scores_from_java_program(test_data, r)
-        if len(scores) != len(labels):
-            print(
-                f"Length mismatch for r={r}: Scores length: {len(scores)}, Labels length: {len(labels)}"
-            )
-        else:
-            fpr, tpr, roc_auc = compute_roc_auc(labels, scores)
-            plot_roc(fpr, tpr, roc_auc, r)
-            print(f"Language: {language_name}, r = {r}, AUC = {roc_auc:.2f}")
 
 
 def preprocess_data(file_path, chunk_size):
@@ -183,21 +186,29 @@ def combine_scores(chunk_scores, num_chunks_per_sequence):
     return composite_scores
 
 
-def analyze_syscalls_data(train_file, test_file, labels_file, chunk_size):
-    # Preprocess test data
+def analyze_syscalls_data(train_file, test_file, labels_file, chunk_size, r_value):
+    # Step 1: Logging the start of syscall data analysis.
+    print(f"Analyzing syscall data with train file: {train_file}, test file: {test_file}, r = {r_value}, chunk size = {chunk_size}")
+
+    # Step 2: Preprocessing the system call data into fixed-length chunks.
     test_data_chunks = preprocess_data(test_file, chunk_size)
+    print(f"Preprocessed test data into {len(test_data_chunks)} chunks.")
 
-    # Run Java program and get scores for each chunk
-    chunk_scores = get_scores_from_java_program(test_data_chunks, r_value="4") # r_value can be adjusted
+    # Step 3: Running the negative selection algorithm on each chunk and collecting scores.
+    chunk_scores = get_scores_from_java_program(test_data_chunks, r_value=str(r_value))
+    print("Received scores for each chunk.")
 
-    # Read labels
+    # Step 4: Loading labels for each sequence (normal or anomalous).
     labels = np.loadtxt(labels_file)
+    print("Loaded labels from file.")
 
-    # Combine chunk scores into composite scores
+    # Step 5: Combining the scores from each chunk to get a composite score for each sequence.
     composite_scores = combine_scores(chunk_scores, len(test_data_chunks) // len(labels))
+    print("Combined chunk scores into composite scores.")
 
-    # Compute ROC and AUC
+    # Step 6: Computing the ROC curve and AUC for the classification.
     fpr, tpr, roc_auc = compute_roc_auc(labels, composite_scores)
-    plot_roc(fpr, tpr, roc_auc, r_value="4") # r_value displayed in the plot
+    additional_title = f" (Syscalls - r={r_value}, Chunk Size={chunk_size})"
+    plot_roc(fpr, tpr, roc_auc, r_value, additional_title=additional_title)
+    print(f"ROC AUC for syscall data: {roc_auc:.2f}")
 
-    print(f"ROC AUC: {roc_auc:.2f}")
