@@ -52,7 +52,7 @@ def compute_roc_auc(labels, scores):
 def plot_roc(fpr, tpr, roc_auc, r_value, additional_title=""):
     plt.figure()
     plt.plot(
-        fpr, tpr, color="darkorange", lw=2, label=f"ROC curve (area = {roc_auc:.2f})"
+        fpr, tpr, color="darkorange", lw=2, label=f"ROC curve (AUC = {roc_auc:.2f})"
     )
     plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
     plt.xlim([0.0, 1.0])
@@ -60,7 +60,7 @@ def plot_roc(fpr, tpr, roc_auc, r_value, additional_title=""):
     plt.xlabel("False Positive Rate")
     plt.ylabel("True Positive Rate")
 
-    title = f"Receiver Operating Characteristic for r = {r_value} {additional_title}".strip()
+    title = f"ROC Curve with R-Value = {r_value} {additional_title}".strip()
     plt.title(title)
     plt.legend(loc="lower right")
 
@@ -111,11 +111,16 @@ def analyze_language_data():
     english_test_file = "english.test"
     tagalog_test_file = "tagalog.test"
     test_data, labels = load_test_data_and_labels(english_test_file, tagalog_test_file)
+    data_sets = []
 
     for r in range(1, 10):
         scores = get_scores_from_java_program(test_data, r, cache_name="language_analysis")
         fpr, tpr, roc_auc = compute_roc_auc(labels, scores)
         plot_roc(fpr, tpr, roc_auc, r)
+        data_sets.append((fpr, tpr, roc_auc, r, f"r={r}"))
+        
+    if data_sets:
+        generate_combined_roc_curves(data_sets, "Different R-values (1 to 9) on English vs. Tagalog")
 
 
 
@@ -155,14 +160,14 @@ def generate_combined_roc_curves(data_sets, additional_title=""):
     colors = ['blue', 'green', 'red', 'cyan', 'magenta', 'yellow', 'black', 'purple', 'orange', 'brown', 'pink', 'gray']
 
     for (fpr, tpr, roc_auc, r_value, title), color in zip(data_sets, colors):
-        plt.plot(fpr, tpr, color=color, lw=2, label=f'{title} (AUC = {roc_auc:.2f}, r = {r_value})')
+        plt.plot(fpr, tpr, color=color, lw=2, label=f'{title} (AUC = {roc_auc:.2f})')
 
     plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', label='Chance')
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
-    plt.title('Combined ROC Curves' + additional_title)
+    plt.title('Combined ROC Curves ' + additional_title)
     plt.legend(loc='lower right', prop={'size': 10})
     plt.grid(True)
 
@@ -187,7 +192,7 @@ def analyze_language_comparison(english_test_file, other_language_test_file, lan
 
     fpr, tpr, roc_auc = compute_roc_auc(labels, scores)
     plot_roc(fpr, tpr, roc_auc, r, additional_title=f" (English vs {language_name})")
-    print(f"Language: {language_name}, r = {r}, AUC = {roc_auc:.2f}")
+    print(f"Language: {language_name}, R-value = {r}, AUC = {roc_auc:.2f}")
 
     return fpr, tpr, roc_auc
 
